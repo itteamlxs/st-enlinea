@@ -1,98 +1,131 @@
 <?php
-require __DIR__ . '/vendor/autoload.php';
-use Dotenv\Dotenv;
+// debug_productos.php - Coloca este archivo en la raíz del proyecto
+declare(strict_types=1);
 
-// Cargar variables de entorno
-$dotenv = Dotenv::createImmutable(__DIR__);
-$dotenv->load();
+require_once __DIR__ . '/vendor/autoload.php';
+require_once __DIR__ . '/modules/Catalogo/config/database.php';
 
 header('Content-Type: text/plain; charset=utf-8');
 
-function testDatabaseConnection() {
-    try {
-        // Configuración de conexión
-        $host = $_ENV['DB_HOST'];
-        $dbname = $_ENV['DB_NAME'];
-        $user = $_ENV['DB_USER'];
-        $pass = $_ENV['DB_PASS'];
-        
-        // Crear conexión PDO
-        $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
-        $options = [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES => false,
-        ];
-        
-        $pdo = new PDO($dsn, $user, $pass, $options);
-        
-        echo "✅ Conexión exitosa a la base de datos\n";
-        echo "---\n";
-        
-        // Verificar tablas existentes
-        $tables = $pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
-        
-        if (empty($tables)) {
-            echo "⚠️ No se encontraron tablas en la base de datos\n";
-        } else {
-            echo "📊 Tablas existentes (" . count($tables) . "):\n";
-            foreach ($tables as $table) {
-                echo "- $table\n";
-            }
-            
-            echo "---\n";
-            
-            // Verificar datos de ejemplo
-            $testTables = ['usuarios', 'productos', 'categorias'];
-            foreach ($testTables as $table) {
-                if (in_array($table, $tables)) {
-                    $count = $pdo->query("SELECT COUNT(*) FROM $table")->fetchColumn();
-                    echo "🔄 $table: $count registros\n";
-                }
-            }
+echo "🔍 DIAGNÓSTICO DE PRODUCTOS\n";
+echo "=========================\n\n";
+
+try {
+    $db = getDatabaseConnection();
+    echo "✅ Conexión a BD exitosa\n\n";
+    
+    // 1. Verificar productos en BD
+    echo "📊 VERIFICANDO PRODUCTOS EN BD:\n";
+    $stmt = $db->query("SELECT COUNT(*) as total FROM productos");
+    $total = $stmt->fetch()['total'];
+    echo "Total productos: $total\n";
+    
+    if ($total > 0) {
+        echo "\n📋 PRIMEROS 5 PRODUCTOS:\n";
+        $stmt = $db->query("SELECT producto_id, nombre, precio, categoria_id FROM productos LIMIT 5");
+        while ($row = $stmt->fetch()) {
+            echo "- ID: {$row['producto_id']}, Nombre: {$row['nombre']}, Precio: {$row['precio']}, Categoria: {$row['categoria_id']}\n";
         }
-        
-        // Prueba CRUD básica
-        echo "---\n🧪 Prueba CRUD básica:\n";
-        
-        // 1. Crear registro de prueba
-        $testName = 'Test_' . bin2hex(random_bytes(3));
-        $pdo->prepare("INSERT INTO categorias (nombre) VALUES (?)")
-            ->execute([$testName]);
-        $id = $pdo->lastInsertId();
-        echo "➕ Creada categoría prueba (ID: $id)\n";
-        
-        // 2. Leer registro
-        $categoria = $pdo->prepare("SELECT * FROM categorias WHERE categoria_id = ?");
-        $categoria->execute([$id]);
-        $data = $categoria->fetch();
-        echo "🔍 Categoría leída: " . ($data['nombre'] ?? 'No encontrada') . "\n";
-        
-        // 3. Eliminar registro
-        $pdo->prepare("DELETE FROM categorias WHERE categoria_id = ?")
-            ->execute([$id]);
-        echo "🗑️ Categoría eliminada\n";
-        
-    } catch (PDOException $e) {
-        echo "❌ Error de conexión: " . $e->getMessage() . "\n";
-        echo "Detalles:\n";
-        echo "- Host: " . $_ENV['DB_HOST'] . "\n";
-        echo "- Usuario: " . $_ENV['DB_USER'] . "\n";
-        echo "- Base de datos: " . $_ENV['DB_NAME'] . "\n";
-        
-        // Sugerencias para solucionar problemas
-        echo "\n🔧 Solución de problemas:\n";
-        echo "1. Verifica que MySQL/MariaDB esté corriendo\n";
-        echo "2. Confirma las credenciales en .env\n";
-        echo "3. Comprueba los permisos del usuario de la BD\n";
-        echo "4. Intenta conectar manualmente: mysql -u {usuario} -p{contraseña} -h {host} {bd}\n";
     }
+    
+    // 2. Verificar categorías
+    echo "\n📊 VERIFICANDO CATEGORÍAS:\n";
+    $stmt = $db->query("SELECT COUNT(*) as total FROM categorias");
+    $totalCat = $stmt->fetch()['total'];
+    echo "Total categorías: $totalCat\n";
+    
+    if ($totalCat > 0) {
+        echo "\n📋 CATEGORÍAS EXISTENTES:\n";
+        $stmt = $db->query("SELECT categoria_id, nombre FROM categorias");
+        while ($row = $stmt->fetch()) {
+            echo "- ID: {$row['categoria_id']}, Nombre: {$row['nombre']}\n";
+        }
+    }
+    
+    // 3. Verificar relación productos-categorías
+    echo "\n🔗 VERIFICANDO RELACIÓN PRODUCTOS-CATEGORÍAS:\n";
+    $stmt = $db->query("
+        SELECT 
+            p.producto_id, 
+            p.nombre as producto_nombre, 
+            p.categoria_id,
+            c.nombre as categoria_nombre
+        FROM productos p
+        LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+        LIMIT 5
+    ");
+    
+    $productos = $stmt->fetchAll();
+    echo "Productos encontrados: " . count($productos) . "\n";
+    
+    foreach ($productos as $prod) {
+        echo "- Producto: {$prod['producto_nombre']}, Categoría: " . ($prod['categoria_nombre'] ?? 'SIN CATEGORÍA') . "\n";
+    }
+    
+    // 4. Probar la consulta exacta del repositorio
+    echo "\n🧪 PROBANDO CONSULTA DEL REPOSITORIO:\n";
+    $stmt = $db->prepare("
+        SELECT 
+            p.*,
+            c.nombre AS categoria_nombre,
+            (SELECT GROUP_CONCAT(ip.url_imagen SEPARATOR ',') 
+             FROM imagenes_productos ip
+             WHERE ip.producto_id = p.producto_id) AS imagenes
+        FROM productos p
+        LEFT JOIN categorias c ON p.categoria_id = c.categoria_id
+        WHERE p.categoria_id IS NOT NULL
+        ORDER BY p.fecha_creacion DESC
+        LIMIT 10 OFFSET 0
+    ");
+    $stmt->execute();
+    
+    $resultados = $stmt->fetchAll();
+    echo "Resultados de la consulta del repositorio: " . count($resultados) . "\n";
+    
+    if (empty($resultados)) {
+        echo "⚠️  LA CONSULTA NO DEVUELVE RESULTADOS\n";
+        echo "Posibles causas:\n";
+        echo "1. Los productos no tienen categoria_id válido\n";
+        echo "2. Las categorías no existen\n";
+        echo "3. Problema con la consulta JOIN\n";
+        
+        // Verificar productos sin categoría válida
+        echo "\n🔍 VERIFICANDO PRODUCTOS SIN CATEGORÍA VÁLIDA:\n";
+        $stmt = $db->query("
+            SELECT p.producto_id, p.nombre, p.categoria_id
+            FROM productos p
+            WHERE p.categoria_id IS NULL 
+               OR p.categoria_id NOT IN (SELECT categoria_id FROM categorias)
+        ");
+        $sinCategoria = $stmt->fetchAll();
+        
+        if (!empty($sinCategoria)) {
+            echo "Productos sin categoría válida:\n";
+            foreach ($sinCategoria as $prod) {
+                echo "- ID: {$prod['producto_id']}, Nombre: {$prod['nombre']}, Categoría ID: {$prod['categoria_id']}\n";
+            }
+        } else {
+            echo "Todos los productos tienen categoría válida.\n";
+        }
+    } else {
+        echo "✅ La consulta funciona correctamente\n";
+        foreach ($resultados as $prod) {
+            echo "- {$prod['nombre']} - {$prod['categoria_nombre']}\n";
+        }
+    }
+    
+    // 5. Verificar autoload
+    echo "\n📦 VERIFICANDO AUTOLOAD:\n";
+    if (class_exists('Modules\Catalogo\Repositories\ProductoRepository')) {
+        echo "✅ ProductoRepository se puede cargar\n";
+    } else {
+        echo "❌ ProductoRepository NO se puede cargar\n";
+    }
+    
+} catch (Exception $e) {
+    echo "❌ Error: " . $e->getMessage() . "\n";
+    echo "Archivo: " . $e->getFile() . "\n";
+    echo "Línea: " . $e->getLine() . "\n";
 }
 
-// Ejecutar prueba
-echo "🔍 Iniciando prueba de conexión a BD...\n";
-echo "📌 Usando archivo .env: " . realpath(__DIR__ . '/.env') . "\n\n";
-
-testDatabaseConnection();
-
-echo "\nPrueba completada 🚀";
+echo "\n🚀 Diagnóstico completado\n";
